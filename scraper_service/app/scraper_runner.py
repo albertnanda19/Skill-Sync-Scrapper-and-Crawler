@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models import Job, JobSource, ScrapeTask
+from app.services.webhook import trigger_scrape_completed_webhook
 
 
 SITES: list[str] = ["indeed", "linkedin", "glassdoor", "google"]
@@ -143,6 +144,8 @@ async def run_scrape_task(task_id: str, query: str, location: str) -> None:
                 )
             )
             await db.commit()
+
+        trigger_scrape_completed_webhook(task_id=task_id, keyword=query, source="all")
 
     except Exception as e:
         async with AsyncSessionLocal() as db:
