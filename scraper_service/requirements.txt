@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+sqlalchemy
+asyncpg
+pydantic
+pandas
+python-dotenv
+requests
+beautifulsoup4
+tls-client
+markdownify
+regex
+numpy
