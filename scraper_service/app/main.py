@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi import Request
 from sqlalchemy import text
 
+from app.api.routes_internal import router as internal_router
 from app.api.routes_scrape import router as scrape_router
 from app.api.routes_status import router as status_router
 from app.database import engine
@@ -67,6 +68,7 @@ async def log_http_requests(request: Request, call_next):
 
 app.include_router(scrape_router)
 app.include_router(status_router)
+app.include_router(internal_router)
 
 
 @app.on_event("startup")

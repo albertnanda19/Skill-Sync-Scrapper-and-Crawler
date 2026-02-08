@@ -19,6 +19,7 @@ class Settings:
     SCRAPE_TIMEOUT_SECONDS: int = _int_env("SCRAPE_TIMEOUT_SECONDS", 120)
     SITES_CONCURRENCY: int = _int_env("SITES_CONCURRENCY", 3)
     SLOW_SCRAPE_THRESHOLD_SECONDS: int = _int_env("SLOW_SCRAPE_THRESHOLD_SECONDS", 30)
+    DB_INSERT_CHUNK_SIZE: int = _int_env("DB_INSERT_CHUNK_SIZE", 500)
 
     GO_BACKEND_URL: str = os.getenv("GO_BACKEND_URL", "")
     INTERNAL_TOKEN: str = os.getenv("INTERNAL_TOKEN", "")

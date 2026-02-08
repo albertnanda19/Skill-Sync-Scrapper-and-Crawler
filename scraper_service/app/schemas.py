@@ -26,3 +26,8 @@ class ScrapeStatusResponse(BaseModel):
     error_message: Optional[str] = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class ScrapeDeleteResponse(BaseModel):
+    task_id: str
+    deleted: bool

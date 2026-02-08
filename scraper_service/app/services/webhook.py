@@ -34,12 +34,14 @@ def send_scrape_completed_webhook(task_id: str, keyword: str, source: str) -> No
         )
         return
 
+    dedupe_key = f"{task_id}:{source}"
+
     with _sent_webhooks_lock:
-        if task_id in _sent_webhooks:
+        if dedupe_key in _sent_webhooks:
             return
-        if task_id in _in_flight_webhooks:
+        if dedupe_key in _in_flight_webhooks:
             return
-        _in_flight_webhooks.add(task_id)
+        _in_flight_webhooks.add(dedupe_key)
 
     completed_at = datetime.utcnow().isoformat() + "Z"
 
@@ -62,7 +64,12 @@ def send_scrape_completed_webhook(task_id: str, keyword: str, source: str) -> No
 
     for attempt in range(1, max_retries + 1):
         retry_num = attempt - 1
-        logger.info("Webhook attempt | task_id=%s retry=%s", task_id, retry_num)
+        logger.info(
+            "Webhook attempt | task_id=%s source=%s retry=%s",
+            task_id,
+            source,
+            retry_num,
+        )
 
         try:
             resp = requests.post(
@@ -75,47 +82,65 @@ def send_scrape_completed_webhook(task_id: str, keyword: str, source: str) -> No
             status = resp.status_code
 
             if 200 <= status < 300:
-                logger.info("Webhook success | task_id=%s status=%s", task_id, status)
+                logger.info(
+                    "Webhook success | task_id=%s source=%s status=%s",
+                    task_id,
+                    source,
+                    status,
+                )
                 with _sent_webhooks_lock:
-                    _sent_webhooks.add(task_id)
-                    _in_flight_webhooks.discard(task_id)
+                    _sent_webhooks.add(dedupe_key)
+                    _in_flight_webhooks.discard(dedupe_key)
                 return
 
             if status in (400, 401, 403):
                 last_error = f"non-retriable status={status} body={resp.text[:500]}"
                 logger.error(
-                    "Webhook permanently failed | task_id=%s error=%s",
+                    "Webhook permanently failed | task_id=%s source=%s error=%s",
                     task_id,
+                    source,
                     last_error,
                 )
                 with _sent_webhooks_lock:
-                    _in_flight_webhooks.discard(task_id)
+                    _in_flight_webhooks.discard(dedupe_key)
                 return
 
             if status >= 500:
                 last_error = f"retriable status={status} body={resp.text[:500]}"
                 logger.error(
-                    "Webhook failed | task_id=%s error=%s",
+                    "Webhook failed | task_id=%s source=%s error=%s",
                     task_id,
+                    source,
                     last_error,
                 )
             else:
                 last_error = f"non-retriable status={status} body={resp.text[:500]}"
                 logger.error(
-                    "Webhook permanently failed | task_id=%s error=%s",
+                    "Webhook permanently failed | task_id=%s source=%s error=%s",
                     task_id,
+                    source,
                     last_error,
                 )
                 with _sent_webhooks_lock:
-                    _in_flight_webhooks.discard(task_id)
+                    _in_flight_webhooks.discard(dedupe_key)
                 return
 
         except (requests.Timeout, requests.ConnectionError) as e:
             last_error = f"{type(e).__name__}: {e}"
-            logger.error("Webhook failed | task_id=%s error=%s", task_id, last_error)
+            logger.error(
+                "Webhook failed | task_id=%s source=%s error=%s",
+                task_id,
+                source,
+                last_error,
+            )
         except requests.RequestException as e:
             last_error = f"RequestException: {e}"
-            logger.error("Webhook failed | task_id=%s error=%s", task_id, last_error)
+            logger.error(
+                "Webhook failed | task_id=%s source=%s error=%s",
+                task_id,
+                source,
+                last_error,
+            )
 
         if attempt < max_retries:
             backoff = 2 ** (attempt - 2) if attempt >= 2 else 0
@@ -123,13 +148,14 @@ def send_scrape_completed_webhook(task_id: str, keyword: str, source: str) -> No
                 time.sleep(backoff)
 
     logger.error(
-        "Webhook permanently failed | task_id=%s error=%s",
+        "Webhook permanently failed | task_id=%s source=%s error=%s",
         task_id,
+        source,
         last_error or "exhausted retries",
     )
 
     with _sent_webhooks_lock:
-        _in_flight_webhooks.discard(task_id)
+        _in_flight_webhooks.discard(dedupe_key)
 
 
 def trigger_scrape_completed_webhook(task_id: str, keyword: str, source: str) -> None:

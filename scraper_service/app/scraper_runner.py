@@ -23,6 +23,11 @@ SITES: list[str] = ["indeed", "linkedin", "glassdoor", "google", "glints"]
 scrape_logger = logging.getLogger("app.scrape")
 
 
+def _chunked(items: list[dict[str, Any]], chunk_size: int) -> list[list[dict[str, Any]]]:
+    size = max(1, int(chunk_size))
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
 def _as_optional_str(value: Any) -> str | None:
     if value is None:
         return None
@@ -112,6 +117,7 @@ async def _scrape_site_and_store(*, task_id: str, site: str, query: str, locatio
             task_id,
             site,
         )
+        trigger_scrape_completed_webhook(task_id=task_id, keyword=query, source=site)
         return 0
 
     df: pd.DataFrame | None = None
@@ -136,6 +142,7 @@ async def _scrape_site_and_store(*, task_id: str, site: str, query: str, locatio
             duration_s,
             error,
         )
+        trigger_scrape_completed_webhook(task_id=task_id, keyword=query, source=site)
         return 0
 
     if df is None or len(df) == 0:
@@ -145,6 +152,7 @@ async def _scrape_site_and_store(*, task_id: str, site: str, query: str, locatio
             site,
             duration_s,
         )
+        trigger_scrape_completed_webhook(task_id=task_id, keyword=query, source=site)
         return 0
 
     records = df.to_dict(orient="records")
@@ -155,11 +163,22 @@ async def _scrape_site_and_store(*, task_id: str, site: str, query: str, locatio
             rows.append(normalized)
 
     if rows:
+        chunk_size = int(getattr(settings, "DB_INSERT_CHUNK_SIZE", 500) or 500)
+        chunks = _chunked(rows, chunk_size)
         async with AsyncSessionLocal() as db:
-            stmt = pg_insert(Job).values(rows)
-            stmt = stmt.on_conflict_do_nothing(index_elements=[Job.source_id, Job.url])
-            await db.execute(stmt)
-            await db.commit()
+            for idx, chunk in enumerate(chunks, start=1):
+                stmt = pg_insert(Job).values(chunk)
+                stmt = stmt.on_conflict_do_nothing(index_elements=[Job.source_id, Job.url])
+                await db.execute(stmt)
+                await db.commit()
+                scrape_logger.info(
+                    "db insert chunk done | task_id=%s site=%s chunk=%s/%s rows=%s",
+                    task_id,
+                    site,
+                    idx,
+                    len(chunks),
+                    len(chunk),
+                )
 
     found = int(len(df))
     if duration_s >= float(settings.SLOW_SCRAPE_THRESHOLD_SECONDS):
@@ -179,6 +198,8 @@ async def _scrape_site_and_store(*, task_id: str, site: str, query: str, locatio
             duration_s,
             found,
         )
+
+    trigger_scrape_completed_webhook(task_id=task_id, keyword=query, source=site)
 
     return found
 
@@ -247,8 +268,6 @@ async def run_scrape_task(task_id: str, query: str, location: str) -> None:
             task_id,
             total_found,
         )
-
-        trigger_scrape_completed_webhook(task_id=task_id, keyword=query, source="all")
 
     except Exception as e:
         async with AsyncSessionLocal() as db:
