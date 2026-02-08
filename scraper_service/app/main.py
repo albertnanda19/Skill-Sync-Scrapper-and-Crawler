@@ -15,8 +15,12 @@ from app.database import engine
 from app.models import Base
 
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s %(threadName)s %(message)s",
+)
 http_logger = logging.getLogger("app.http")
+scrape_logger = logging.getLogger("app.scrape")
 
 
 app = FastAPI(title="Scraper Service")
@@ -67,6 +71,7 @@ app.include_router(status_router)
 
 @app.on_event("startup")
 async def on_startup() -> None:
+    scrape_logger.info("service startup")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

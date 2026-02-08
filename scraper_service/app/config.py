@@ -17,6 +17,8 @@ class Settings:
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     MAX_RESULTS_PER_SITE: int = _int_env("MAX_RESULTS_PER_SITE", 50)
     SCRAPE_TIMEOUT_SECONDS: int = _int_env("SCRAPE_TIMEOUT_SECONDS", 120)
+    SITES_CONCURRENCY: int = _int_env("SITES_CONCURRENCY", 3)
+    SLOW_SCRAPE_THRESHOLD_SECONDS: int = _int_env("SLOW_SCRAPE_THRESHOLD_SECONDS", 30)
 
     GO_BACKEND_URL: str = os.getenv("GO_BACKEND_URL", "")
     INTERNAL_TOKEN: str = os.getenv("INTERNAL_TOKEN", "")
