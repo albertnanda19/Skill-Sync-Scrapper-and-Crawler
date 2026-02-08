@@ -246,7 +246,13 @@ class Glassdoor(Scraper):
                 """,
             }
         ]
-        res = requests.post(url, json=body, headers=headers)
+        if self.session is None:
+            res = requests.post(url, json=body, headers=headers)
+        else:
+            try:
+                res = self.session.post(url, json=body, headers=headers, timeout_seconds=15)
+            except TypeError:
+                res = self.session.post(url, json=body, headers=headers, timeout=15)
         if res.status_code != 200:
             return None
         data = res.json()[0]

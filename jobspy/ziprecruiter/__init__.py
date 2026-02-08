@@ -52,6 +52,7 @@ class ZipRecruiter(Scraper):
 
         self.delay = 5
         self.jobs_per_page = 20
+        self.details_max_workers = 8
         self.seen_urls = set()
 
     def scrape(self, scraper_input: ScraperInput) -> JobResponse:
@@ -115,7 +116,7 @@ class ZipRecruiter(Scraper):
         res_data = res.json()
         jobs_list = res_data.get("jobs", [])
         next_continue_token = res_data.get("continue", None)
-        with ThreadPoolExecutor(max_workers=self.jobs_per_page) as executor:
+        with ThreadPoolExecutor(max_workers=min(self.details_max_workers, max(1, len(jobs_list)))) as executor:
             job_results = [executor.submit(self._process_job, job) for job in jobs_list]
 
         job_list = list(filter(None, (result.result() for result in job_results)))

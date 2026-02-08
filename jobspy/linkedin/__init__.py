@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse, urlunparse, unquote
@@ -49,6 +50,7 @@ class LinkedIn(Scraper):
     delay = 3
     band_delay = 4
     jobs_per_page = 25
+    details_max_workers = 8
 
     def __init__(
         self, proxies: list[str] | str | None = None, ca_cert: str | None = None, user_agent: str | None = None
@@ -143,25 +145,51 @@ class LinkedIn(Scraper):
             if len(job_cards) == 0:
                 return JobResponse(jobs=job_list)
 
+            fetch_desc = bool(scraper_input.linkedin_fetch_description)
+            base_items: list[tuple[str, Tag]] = []
+
             for job_card in job_cards:
                 href_tag = job_card.find("a", class_="base-card__full-link")
-                if href_tag and "href" in href_tag.attrs:
-                    href = href_tag.attrs["href"].split("?")[0]
-                    job_id = href.split("-")[-1]
+                if not (href_tag and "href" in href_tag.attrs):
+                    continue
+                href = href_tag.attrs["href"].split("?")[0]
+                job_id = href.split("-")[-1]
+                if job_id in seen_ids:
+                    continue
+                seen_ids.add(job_id)
+                base_items.append((job_id, job_card))
 
-                    if job_id in seen_ids:
-                        continue
-                    seen_ids.add(job_id)
+                if not continue_search():
+                    break
 
-                    try:
-                        fetch_desc = scraper_input.linkedin_fetch_description
-                        job_post = self._process_job(job_card, job_id, fetch_desc)
-                        if job_post:
-                            job_list.append(job_post)
-                        if not continue_search():
-                            break
-                    except Exception as e:
-                        raise LinkedInException(str(e))
+            job_details_map: dict[str, dict] = {}
+            if fetch_desc and base_items:
+                max_workers = min(self.details_max_workers, max(1, len(base_items)))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_job_id = {
+                        executor.submit(self._get_job_details, job_id): job_id
+                        for job_id, _ in base_items
+                    }
+                    for future in as_completed(future_to_job_id):
+                        job_id = future_to_job_id[future]
+                        try:
+                            job_details_map[job_id] = future.result() or {}
+                        except Exception:
+                            job_details_map[job_id] = {}
+
+            for job_id, job_card in base_items:
+                try:
+                    job_post = self._process_job(
+                        job_card,
+                        job_id,
+                        job_details=job_details_map.get(job_id) if fetch_desc else None,
+                    )
+                    if job_post:
+                        job_list.append(job_post)
+                    if not continue_search():
+                        break
+                except Exception as e:
+                    raise LinkedInException(str(e))
 
             if continue_search():
                 time.sleep(random.uniform(self.delay, self.delay + self.band_delay))
@@ -171,7 +199,7 @@ class LinkedIn(Scraper):
         return JobResponse(jobs=job_list)
 
     def _process_job(
-        self, job_card: Tag, job_id: str, full_descr: bool
+        self, job_card: Tag, job_id: str, job_details: dict | None
     ) -> Optional[JobPost]:
         salary_tag = job_card.find("span", class_="job-search-card__salary-info")
 
@@ -216,10 +244,10 @@ class LinkedIn(Scraper):
                 date_posted = datetime.strptime(datetime_str, "%Y-%m-%d")
             except:
                 date_posted = None
-        job_details = {}
-        if full_descr:
-            job_details = self._get_job_details(job_id)
-            description = job_details.get("description")
+
+        details = job_details or {}
+        if job_details is not None:
+            description = details.get("description")
         is_remote = is_job_remote(title, description, location)
 
         return JobPost(
@@ -232,14 +260,14 @@ class LinkedIn(Scraper):
             date_posted=date_posted,
             job_url=f"{self.base_url}/jobs/view/{job_id}",
             compensation=compensation,
-            job_type=job_details.get("job_type"),
-            job_level=job_details.get("job_level", "").lower(),
-            company_industry=job_details.get("company_industry"),
-            description=job_details.get("description"),
-            job_url_direct=job_details.get("job_url_direct"),
+            job_type=details.get("job_type"),
+            job_level=details.get("job_level", "").lower(),
+            company_industry=details.get("company_industry"),
+            description=details.get("description"),
+            job_url_direct=details.get("job_url_direct"),
             emails=extract_emails_from_text(description),
-            company_logo=job_details.get("company_logo"),
-            job_function=job_details.get("job_function"),
+            company_logo=details.get("company_logo"),
+            job_function=details.get("job_function"),
         )
 
     def _get_job_details(self, job_id: str) -> dict:

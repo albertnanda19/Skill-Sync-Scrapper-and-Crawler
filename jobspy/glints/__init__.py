@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 import random
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Any, Iterable
 from urllib.parse import urljoin
@@ -23,6 +25,7 @@ class Glints(Scraper):
     jobs_per_page = 20
     max_pages = 100
     max_attempts = 4
+    page_max_workers = 5
 
     def __init__(
         self,
@@ -54,6 +57,7 @@ class Glints(Scraper):
 
         self.scraper_input: ScraperInput | None = None
         self.seen_urls: set[str] = set()
+        self._seen_lock = threading.Lock()
 
     def scrape(self, scraper_input: ScraperInput) -> JobResponse:
         self.scraper_input = scraper_input
@@ -68,20 +72,35 @@ class Glints(Scraper):
         )
 
         while len(self.seen_urls) < target and page <= max_pages:
-            log.info(f"search page: {page} / {max_pages}")
+            batch_pages = list(range(page, min(max_pages, page + self.page_max_workers - 1) + 1))
+            for p in batch_pages:
+                log.info(f"search page: {p} / {max_pages}")
+
             try:
-                jobs = self._scrape_page(page)
+                with ThreadPoolExecutor(max_workers=min(self.page_max_workers, len(batch_pages))) as executor:
+                    futures = [executor.submit(self._scrape_page, p) for p in batch_pages]
+
+                batch_jobs: list[list[JobPost]] = []
+                for fut in futures:
+                    batch_jobs.append(fut.result())
             except Exception as e:
-                log.error(f"Glints: failed to scrape page {page}: {e}")
+                log.error(f"Glints: failed to scrape pages: {e}")
                 break
 
-            if not jobs:
+            any_jobs = False
+            for jobs in batch_jobs:
+                if jobs:
+                    any_jobs = True
+                    job_list.extend(jobs)
+                if len(self.seen_urls) >= target:
+                    break
+
+            if not any_jobs:
                 break
 
-            job_list.extend(jobs)
-            page += 1
+            page = batch_pages[-1] + 1
 
-            if len(self.seen_urls) < target:
+            if len(self.seen_urls) < target and page <= max_pages:
                 time.sleep(random.uniform(self.delay, self.delay + self.band_delay))
 
         start = scraper_input.offset or 0
@@ -284,9 +303,10 @@ class Glints(Scraper):
             if not job_url.startswith("http"):
                 job_url = urljoin(self.base_url, job_url)
 
-            if job_url in self.seen_urls:
-                continue
-            self.seen_urls.add(job_url)
+            with self._seen_lock:
+                if job_url in self.seen_urls:
+                    continue
+                self.seen_urls.add(job_url)
 
             title = it.get("title")
             if not title or not isinstance(title, str):

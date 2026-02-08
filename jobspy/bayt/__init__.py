@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from bs4 import BeautifulSoup
 
@@ -23,6 +24,7 @@ class BaytScraper(Scraper):
     base_url = "https://www.bayt.com"
     delay = 2
     band_delay = 3
+    details_max_workers = 8
 
     def __init__(
         self, proxies: list[str] | str | None = None, ca_cert: str | None = None, user_agent: str | None = None
@@ -55,21 +57,28 @@ class BaytScraper(Scraper):
                 )
 
             initial_count = len(job_list)
-            for job in job_elements:
-                try:
-                    job_post = self._extract_job_info(job)
-                    if job_post:
-                        job_list.append(job_post)
-                        if len(job_list) >= results_wanted:
-                            break
-                    else:
-                        log.debug(
-                            "Extraction returned None. Job snippet:\n"
-                            + job.prettify()[:500]
-                        )
-                except Exception as e:
-                    log.error(f"Bayt: Error extracting job info: {str(e)}")
-                    continue
+
+            max_workers = min(self.details_max_workers, max(1, len(job_elements)))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_idx = {
+                    executor.submit(self._extract_job_info, job): idx
+                    for idx, job in enumerate(job_elements)
+                }
+
+                results: dict[int, JobPost] = {}
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        job_post = future.result()
+                        if job_post:
+                            results[idx] = job_post
+                    except Exception as e:
+                        log.error(f"Bayt: Error extracting job info: {str(e)}")
+
+            for idx in sorted(results.keys()):
+                job_list.append(results[idx])
+                if len(job_list) >= results_wanted:
+                    break
 
             if len(job_list) == initial_count:
                 log.info(f"No new jobs found on page {page}. Ending pagination.")

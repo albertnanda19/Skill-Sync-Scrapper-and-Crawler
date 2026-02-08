@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 import random
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from typing import Optional
 
@@ -72,6 +74,7 @@ class Naukri(Scraper):
         self.scraper_input = scraper_input
         job_list: list[JobPost] = []
         seen_ids = set()
+        seen_lock = threading.Lock()
         start = scraper_input.offset or 0
         page = (start // self.jobs_per_page) + 1
         request_count = 0
@@ -122,24 +125,41 @@ class Naukri(Scraper):
                 log.error(f"Naukri API request failed: {str(e)}")
                 return JobResponse(jobs=job_list)
 
-            for job in job_details:
+            eligible: list[tuple[int, dict, str]] = []
+            for idx, job in enumerate(job_details):
                 job_id = job.get("jobId")
-                if not job_id or job_id in seen_ids:
+                if not job_id:
                     continue
-                seen_ids.add(job_id)
-                log.debug(f"Processing job ID: {job_id}")
+                with seen_lock:
+                    if job_id in seen_ids:
+                        continue
+                    seen_ids.add(job_id)
+                eligible.append((idx, job, job_id))
 
-                try:
-                    fetch_desc = scraper_input.linkedin_fetch_description
-                    job_post = self._process_job(job, job_id, fetch_desc)
-                    if job_post:
-                        job_list.append(job_post)
-                        log.info(f"Added job: {job_post.title} (ID: {job_id})")
-                    if not continue_search():
-                        break
-                except Exception as e:
-                    log.error(f"Error processing job ID {job_id}: {str(e)}")
-                    raise NaukriException(str(e))
+            fetch_desc = scraper_input.linkedin_fetch_description
+            max_workers = min(8, max(1, len(eligible)))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_idx = {
+                    executor.submit(self._process_job, job, job_id, fetch_desc): idx
+                    for idx, job, job_id in eligible
+                }
+
+                results: dict[int, JobPost] = {}
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        job_post = future.result()
+                        if job_post:
+                            results[idx] = job_post
+                    except Exception as e:
+                        log.error(f"Error processing job: {str(e)}")
+
+            for idx in sorted(results.keys()):
+                job_post = results[idx]
+                job_list.append(job_post)
+                log.info(f"Added job: {job_post.title}")
+                if not continue_search():
+                    break
 
             if continue_search():
                 time.sleep(random.uniform(self.delay, self.delay + self.band_delay))

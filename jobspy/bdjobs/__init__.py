@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from urllib.parse import urljoin
@@ -44,6 +45,7 @@ class BDJobs(Scraper):
     search_url = "https://jobs.bdjobs.com/jobsearch.asp"
     delay = 2
     band_delay = 3
+    details_max_workers = 8
 
     def __init__(
         self, proxies: list[str] | str | None = None, ca_cert: str | None = None, user_agent: str | None = None
@@ -110,17 +112,30 @@ class BDJobs(Scraper):
 
                 log.info(f"Found {len(job_cards)} job cards on page {page}")
 
-                for job_card in job_cards:
-                    try:
-                        job_post = self._process_job(job_card)
-                        if job_post and job_post.id not in seen_ids:
-                            seen_ids.add(job_post.id)
-                            job_list.append(job_post)
+                max_workers = min(self.details_max_workers, max(1, len(job_cards)))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_idx = {
+                        executor.submit(self._process_job, job_card): idx
+                        for idx, job_card in enumerate(job_cards)
+                    }
 
-                            if not continue_search():
-                                break
-                    except Exception as e:
-                        log.error(f"Error processing job card: {str(e)}")
+                    results: dict[int, JobPost] = {}
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
+                        try:
+                            job_post = future.result()
+                            if job_post:
+                                results[idx] = job_post
+                        except Exception as e:
+                            log.error(f"Error processing job card: {str(e)}")
+
+                for idx in sorted(results.keys()):
+                    job_post = results[idx]
+                    if job_post and job_post.id not in seen_ids:
+                        seen_ids.add(job_post.id)
+                        job_list.append(job_post)
+                        if not continue_search():
+                            break
 
                 page += 1
                 # Add delay between requests
