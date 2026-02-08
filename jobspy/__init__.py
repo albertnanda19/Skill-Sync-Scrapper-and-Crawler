@@ -8,6 +8,7 @@ import pandas as pd
 from jobspy.bayt import BaytScraper
 from jobspy.bdjobs import BDJobs
 from jobspy.glassdoor import Glassdoor
+from jobspy.glints import Glints
 from jobspy.google import Google
 from jobspy.indeed import Indeed
 from jobspy.linkedin import LinkedIn
@@ -61,6 +62,7 @@ def scrape_jobs(
         Site.ZIP_RECRUITER: ZipRecruiter,
         Site.GLASSDOOR: Glassdoor,
         Site.GOOGLE: Google,
+        Site.GLINTS: Glints,
         Site.BAYT: BaytScraper,
         Site.NAUKRI: Naukri,
         Site.BDJOBS: BDJobs,  # Add BDJobs to the scraper mapping

@@ -16,7 +16,7 @@ from app.models import Job, JobSource, ScrapeTask
 from app.services.webhook import trigger_scrape_completed_webhook
 
 
-SITES: list[str] = ["indeed", "linkedin", "glassdoor", "google"]
+SITES: list[str] = ["indeed", "linkedin", "glassdoor", "google", "glints"]
 
 
 def _as_optional_str(value: Any) -> str | None:

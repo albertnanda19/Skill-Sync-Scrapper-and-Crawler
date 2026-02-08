@@ -75,6 +75,7 @@ async def on_startup() -> None:
             (str(uuid.uuid4()), "linkedin", "https://www.linkedin.com"),
             (str(uuid.uuid4()), "glassdoor", "https://www.glassdoor.com"),
             (str(uuid.uuid4()), "google", "https://www.google.com"),
+            (str(uuid.uuid4()), "glints", "https://glints.com"),
         ]
 
         await conn.execute(
